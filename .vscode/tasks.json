@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Aiken Format",
+      "type": "shell",
+      "command": "aiken",
+      "args": ["fmt"],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "reveal": "silent",
+        "clear": true,
+        "showReuseMessage": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Aiken Compile",
+
+      "type": "shell",
+      "command": "aiken",
+      "args": ["c"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "clear": true,
+        "showReuseMessage": false,
+        "panel": "shared"
+      },
+      "problemMatcher": [],
+      "detail": "Runs Aiken compilation."
+    },
+    {
+      "label": "Next.js: run",
+      "type": "npm",
+      "script": "dev",
+      "presentation": {
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Prettier: Fix",
+      "type": "shell",
+      "command": "cd client && npx prettier --write ."
+    },
+    {
+      "label": "ESLint: Fix",
+      "type": "shell",
+      "command": "npx eslint --fix ."
+    }
+  ]
+}

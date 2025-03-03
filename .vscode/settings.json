@@ -1,0 +1,25 @@
+{
+  "VsCodeTaskButtons.showCounter": false,
+  "VsCodeTaskButtons.tasks": [
+    {
+      "label": "check",
+      "task": "Aiken Compile"
+    },
+    {
+      "label": "fmt",
+      "task": "Aiken Format"
+    },
+    {
+      "label": "Next dev",
+      "task": "Next.js: run"
+    },
+    {
+      "label": "Prettier",
+      "task": "Prettier: Fix"
+    },
+    {
+      "label": "ESLint",
+      "task": "ESLint: Fix"
+    }
+  ]
+}
