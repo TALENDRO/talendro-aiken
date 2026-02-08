@@ -1,11 +1,19 @@
 use aiken/primitive/bytearray
-use cardano/address.{Script, VerificationKey}
-use cardano/assets.{PolicyId}
+use cardano/address.{
+  Address, Script, VerificationKey, from_script, from_verification_key,
+}
+use cardano/assets.{PolicyId, from_asset, from_lovelace, merge}
 use cardano/transaction.{
-  Output, OutputReference, Transaction, find_input, find_script_outputs,
+  InlineDatum, Input, Output, OutputReference, Transaction, find_input,
+  find_script_outputs,
 }
 use datum_file as d
 use mint_utils
+use tx_util/builder/txn.{
+  add_asset_to_tx_output, add_signatory, add_tx_input, add_tx_output,
+  add_tx_ref_input, new_tx_input, new_tx_output, set_datum_of_tx_input,
+  set_datum_of_tx_output, with_asset_of_tx_input,
+}
 use types.{ConfigDatum, ProjectDatum}
 use utils
 
@@ -58,6 +66,11 @@ validator project_initiator(config_nft: PolicyId) {
               utils.address_from_tuple((vkh, skh)) == dev_output.address
             None -> fail
           }?,
+          utils.must_have_token_in_output(
+            dev_output,
+            bytearray.concat("dev_", datum.title),
+            policy_id,
+          )?,
           utils.must_send_to_correct_script(
             contract_output,
             datum.pay,
@@ -137,4 +150,249 @@ validator project_initiator(config_nft: PolicyId) {
   else(_) {
     fail
   }
+}
+
+// Mocks
+const config_nft_pid =
+  #"00000000000000000000000000000000000000000000000000000001"
+
+const project_token_pid =
+  #"00000000000000000000000000000000000000000000000000000002"
+
+// mocked policy id
+
+const attacker_vkh = #"11111111111111111111111111111111111111111111111111111111"
+
+const developer_vkh =
+  #"22222222222222222222222222222222222222222222222222222222"
+
+const holding_script_vkh =
+  #"33333333333333333333333333333333333333333333333333333333"
+
+const milestone_script_vkh =
+  #"44444444444444444444444444444444444444444444444444444444"
+
+const talendro_user_nft =
+  #"55555555555555555555555555555555555555555555555555555555"
+
+const config_datum =
+  ConfigDatum {
+    identification_nft: #"00000000000000000000000000000000000000000000000000000000",
+    milestone_contract_policy: #"00000000000000000000000000000000000000000000000000000000",
+    milestone_contract_address: milestone_script_vkh,
+    holding_contract: holding_script_vkh,
+    projectinit_contract: #"00000000000000000000000000000000000000000000000000000000",
+    arbitrator_nft: #"00000000000000000000000000000000000000000000000000000000",
+    arbitrator_contract: #"00000000000000000000000000000000000000000000000000000000",
+    talendrouser_nft: talendro_user_nft,
+    stake_vkh: (#"00", #"00"),
+    stake_amount: 0,
+  }
+
+test reproduction_exploit_fail() fail {
+  // Setup
+  let clt_token_A = "clt_ProjectA"
+  let dev_token_B = "dev_ProjectB"
+  // Project B Datum (initial state: developer is None)
+  let initial_datum_B =
+    ProjectDatum {
+      title: "ProjectB",
+      pay: Some(1000),
+      developer: None,
+      client: (developer_vkh, ""),
+      milestones: [],
+      current_milestone: None,
+      next_milestone: None,
+    }
+  // Project B Datum (after exploit: developer is Attacker)
+  let exploited_datum_B =
+    ProjectDatum {
+      title: "ProjectB",
+      pay: Some(1000),
+      developer: Some((attacker_vkh, "")),
+      client: (developer_vkh, ""),
+      milestones: [],
+      current_milestone: None,
+      next_milestone: None,
+    }
+  // Reference Input (Config)
+  let ref_input_config =
+    new_tx_input(
+      OutputReference(
+        #"0000000000000000000000000000000000000000000000000000000000000000",
+        0,
+      ),
+      from_verification_key(#"00"),
+    )
+      |> set_datum_of_tx_input(InlineDatum(config_datum))
+      |> with_asset_of_tx_input(
+          merge(
+            from_asset(config_nft_pid, "config", 1),
+            from_asset(talendro_user_nft, "user", 1),
+          ),
+        )
+
+  // Inputs
+  // 1. Script Input (Project B)
+  let script_input =
+    new_tx_input(
+      OutputReference(
+        #"0000000000000000000000000000000000000000000000000000000000000001",
+        0,
+      ),
+      from_script(project_token_pid),
+    ) // Script address (hash of validator)
+      |> set_datum_of_tx_input(InlineDatum(initial_datum_B))
+      |> with_asset_of_tx_input(
+          merge(
+            from_lovelace(2000),
+            from_asset(project_token_pid, dev_token_B, 1),
+          ),
+        )
+  // 2. Attacker Input (Project A token)
+  let attacker_input =
+    new_tx_input(
+      OutputReference(
+        #"0000000000000000000000000000000000000000000000000000000000000002",
+        0,
+      ),
+      from_verification_key(attacker_vkh),
+    )
+      |> with_asset_of_tx_input(
+          merge(
+            from_lovelace(5000),
+            from_asset(project_token_pid, clt_token_A, 1),
+          ),
+        )
+  // Outputs
+  // 1. Attacker Output (Recycling clt_A token)
+  let output_attacker_clt =
+    new_tx_output(from_verification_key(attacker_vkh))
+      |> add_asset_to_tx_output(from_asset(project_token_pid, clt_token_A, 1))
+      |> add_asset_to_tx_output(from_lovelace(2000))
+
+  // 2. Attacker Output (Stealing dev_B token)
+  let output_attacker_dev =
+    new_tx_output(from_verification_key(attacker_vkh))
+      |> add_asset_to_tx_output(from_asset(project_token_pid, dev_token_B, 1))
+      |> add_asset_to_tx_output(from_lovelace(2000))
+  // 3. Script Output (Project B updated datum)
+  let output_script =
+    new_tx_output(from_script(holding_script_vkh)) // Goes to holding script
+      |> set_datum_of_tx_output(InlineDatum(exploited_datum_B))
+      |> add_asset_to_tx_output(from_lovelace(1000))
+  // Transaction
+  let tx =
+    transaction.placeholder
+      |> add_tx_ref_input(ref_input_config)
+      |> add_tx_input(script_input)
+      |> add_tx_input(attacker_input)
+      |> add_tx_output(output_attacker_clt) // Make sure this is first so find_output_with_policy finds it!
+      |> add_tx_output(output_attacker_dev)
+      |> add_tx_output(output_script)
+      |> add_signatory(attacker_vkh)
+  // Run Validator
+  let redeemer = 1
+  // Accept Project
+  project_initiator.spend(
+    config_nft_pid,
+    Some(initial_datum_B),
+    redeemer,
+    script_input.output_reference,
+    tx,
+  )
+}
+
+test legit_accept_pass() {
+  // Setup
+  // Developer accepts Project B properly.
+  // Developer receives dev_ProjectB token.
+  let dev_token_B = "dev_ProjectB"
+  // Project B Datum (initial state: developer is None)
+  let initial_datum_B =
+    ProjectDatum {
+      title: "ProjectB",
+      pay: Some(1000),
+      developer: None,
+      client: (developer_vkh, ""),
+      milestones: [],
+      current_milestone: None,
+      next_milestone: None,
+    }
+  // Project B Datum (after: developer is Developer)
+  let accepted_datum_B =
+    ProjectDatum {
+      title: "ProjectB",
+      pay: Some(1000),
+      developer: Some((attacker_vkh, "")),
+      // Using attacker_vkh as developer for simplicity (assume attacker is the legit dev here)
+      client: (developer_vkh, ""),
+      milestones: [],
+      current_milestone: None,
+      next_milestone: None,
+    }
+  // Reference Input (Config)
+  let ref_input_config =
+    new_tx_input(
+      OutputReference(
+        #"0000000000000000000000000000000000000000000000000000000000000000",
+        0,
+      ),
+      from_verification_key(#"00"),
+    )
+      |> set_datum_of_tx_input(InlineDatum(config_datum))
+      |> with_asset_of_tx_input(
+          merge(
+            from_asset(config_nft_pid, "config", 1),
+            from_asset(talendro_user_nft, "user", 1),
+          ),
+        )
+
+  // Inputs
+  // 1. Script Input (Project B)
+  let script_input =
+    new_tx_input(
+      OutputReference(
+        #"0000000000000000000000000000000000000000000000000000000000000001",
+        0,
+      ),
+      from_script(project_token_pid),
+    ) // Script address
+      |> set_datum_of_tx_input(InlineDatum(initial_datum_B))
+      |> with_asset_of_tx_input(
+          merge(
+            from_lovelace(2000),
+            from_asset(project_token_pid, dev_token_B, 1),
+          ),
+        )
+  // Outputs
+  // 1. Developer Output (Receiving dev_B token)
+  // This must be the FIRST output with policy ID to be found by `find_output_with_policy`
+  let output_dev =
+    new_tx_output(from_verification_key(attacker_vkh))
+      |> add_asset_to_tx_output(from_asset(project_token_pid, dev_token_B, 1))
+      |> add_asset_to_tx_output(from_lovelace(2000))
+  // 2. Script Output (Project B updated datum)
+  let output_script =
+    new_tx_output(from_script(holding_script_vkh)) // Goes to holding script
+      |> set_datum_of_tx_output(InlineDatum(accepted_datum_B))
+      |> add_asset_to_tx_output(from_lovelace(1000))
+  // Transaction
+  let tx =
+    transaction.placeholder
+      |> add_tx_ref_input(ref_input_config)
+      |> add_tx_input(script_input)
+      |> add_tx_output(output_dev)
+      |> add_tx_output(output_script)
+      |> add_signatory(attacker_vkh)
+  // Run Validator
+  let redeemer = 1
+  // Accept Project
+  project_initiator.spend(
+    config_nft_pid,
+    Some(initial_datum_B),
+    redeemer,
+    script_input.output_reference,
+    tx,
+  )
 }
